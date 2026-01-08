@@ -1,0 +1,337 @@
+openapi: 3.0.3
+info:
+  title: IthalaMed Patient & Facility Service
+  version: 1.0.0
+  description: APIs for Patient registration, verification, profile, search, and Facility registration + dashboard endpoints.
+servers:
+  - url: http://localhost:3001/api/v1
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Address:
+      type: object
+      properties:
+        street:
+          type: string
+        suburb:
+          type: string
+        city:
+          type: string
+        province:
+          type: string
+        postalCode:
+          type: string
+        country:
+          type: string
+    MedicalAid:
+      type: object
+      properties:
+        scheme:
+          type: string
+        membershipNumber:
+          type: string
+        verified:
+          type: boolean
+    PatientRegister:
+      type: object
+      required:
+        - firstName
+        - lastName
+        - idNumber
+        - dateOfBirth
+        - phoneNumber
+        - otpChannel
+      properties:
+        firstName:
+          type: string
+        lastName:
+          type: string
+        idNumber:
+          type: string
+          pattern: '^\d{13}$'
+          description: SA ID (13 digits). x-sensitive indicates encryption at rest.
+          x-sensitive: true
+          x-validate: sa-id-luhn
+        dateOfBirth:
+          type: string
+          format: date
+        gender:
+          type: string
+          enum: [male, female, other]
+        phoneNumber:
+          type: string
+          description: E.164 preferred
+        email:
+          type: string
+          format: email
+        address:
+          $ref: '#/components/schemas/Address'
+        medicalAid:
+          $ref: '#/components/schemas/MedicalAid'
+        emergencyContacts:
+          type: array
+          items:
+            type: object
+            required: [name, relationship, phone]
+            properties:
+              name: { type: string }
+              relationship: { type: string }
+              phone: { type: string }
+        relationshipToMain:
+          type: string
+          enum: [self, dependent]
+        otpChannel:
+          type: string
+          enum: [sms, email]
+    PatientVerifyOtp:
+      type: object
+      required: [tempRegistrationId, otp]
+      properties:
+        tempRegistrationId: { type: string, format: uuid }
+        otp: { type: string }
+    PatientSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        patientNumber: { type: string }
+        firstName: { type: string }
+        lastName: { type: string }
+        dateOfBirth: { type: string, format: date }
+        gender: { type: string }
+        phoneNumber: { type: string }
+        email: { type: string }
+        status: { type: string }
+        lastVisit: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    FacilityRegister:
+      type: object
+      required: [name, facilityType, address, contactUser]
+      properties:
+        name: { type: string }
+        facilityType: { type: string, enum: [hospital, private_center, clinic] }
+        address: { $ref: '#/components/schemas/Address' }
+        phone: { type: string }
+        email: { type: string, format: email }
+        accreditation: { type: object }
+        services:
+          type: array
+          items: { type: string }
+        license:
+          type: object
+          properties:
+            documentId: { type: string }
+            issuedAt: { type: string, format: date }
+        contactUser:
+          type: object
+          required: [firstName, lastName, email, phoneNumber]
+          properties:
+            firstName: { type: string }
+            lastName: { type: string }
+            email: { type: string, format: email }
+            phoneNumber: { type: string }
+    FacilitySummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        facilityNumber: { type: string }
+        name: { type: string }
+        facilityType: { type: string }
+        address: { $ref: '#/components/schemas/Address' }
+        phone: { type: string }
+        email: { type: string }
+        status: { type: string }
+security:
+  - BearerAuth: []
+paths:
+  /patients/register:
+    post:
+      summary: Start patient registration (send OTP)
+      operationId: registerPatient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatientRegister'
+      responses:
+        '201':
+          description: OTP sent; temporary registration created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tempRegistrationId: { type: string, format: uuid }
+                  message: { type: string }
+  /patients/verify-otp:
+    post:
+      summary: Verify OTP and finalize registration
+      operationId: verifyPatientOtp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatientVerifyOtp'
+      responses:
+        '201':
+          description: Patient created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  patient:
+                    $ref: '#/components/schemas/PatientSummary'
+                  accessToken: { type: string }
+        '401':
+          description: OTP invalid or expired
+        '409':
+          description: Duplicate patient detected
+  /patients/{patientId}:
+    get:
+      summary: Get patient profile (RBAC enforced)
+      operationId: getPatientById
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Patient profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatientSummary'
+        '404':
+          description: Not found
+    patch:
+      summary: Update patient profile (partial)
+      operationId: updatePatient
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phoneNumber: { type: string }
+                email: { type: string, format: email }
+                address: { $ref: '#/components/schemas/Address' }
+      responses:
+        '200':
+          description: Updated
+  /patients/search:
+    get:
+      summary: Search patients (permissioned)
+      operationId: searchPatients
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: '#/components/schemas/PatientSummary' }
+                  total: { type: integer }
+  /facilities/register:
+    post:
+      summary: Register facility (hospital / private center / clinic)
+      operationId: registerFacility
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FacilityRegister'
+      responses:
+        '201':
+          description: Facility created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FacilitySummary'
+  /facilities/{facilityId}:
+    get:
+      summary: Get facility by id
+      operationId: getFacilityById
+      parameters:
+        - name: facilityId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Facility
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FacilitySummary'
+  /dashboard/patients/{patientId}:
+    get:
+      summary: Patient dashboard summary
+      operationId: getPatientDashboard
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  patientId: { type: string }
+                  fullName: { type: string }
+                  age: { type: integer }
+                  nextAppointment: { type: object, nullable: true }
+                  activeMedicationsCount: { type: integer }
+                  activeConditions: { type: array, items: { type: string } }
+  /dashboard/facility/{facilityId}:
+    get:
+      summary: Facility admin dashboard
+      operationId: getFacilityDashboard
+      parameters:
+        - name: facilityId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Facility dashboard
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  facilityId: { type: string }
+                  name: { type: string }
+                  upcomingAppointments: { type: integer }
+                  activePatients: { type: integer }
+                  bedOccupancyRate: { type: number }
