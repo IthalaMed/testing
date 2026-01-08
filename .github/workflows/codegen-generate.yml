@@ -1,0 +1,39 @@
+name: Generate Patient slice & commit
+permissions:
+  contents: write
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'Commit generated outputs to codegen/full-stubs'
+        required: true
+        default: 'false'
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Run generation script (NestJS & FastAPI templates)
+        run: |
+          chmod +x tools/full_codegen.sh || true
+          # If you added full_codegen.sh, run it; otherwise run generator for this slice locally
+          if [ -x tools/full_codegen.sh ]; then
+            ./tools/full_codegen.sh
+          else
+            echo "No full_codegen.sh found; generation should be run locally."
+          fi
+      - name: Commit generated artifacts (optional)
+        if: ${{ github.event.inputs.commit == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x tools/commit_generated.sh || true
+          ./tools/commit_generated.sh
